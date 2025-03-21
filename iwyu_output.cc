@@ -11,8 +11,7 @@
 
 #include <algorithm>                    // for sort, find
 #include <cstdio>                       // for snprintf
-// TODO(wan): make sure IWYU doesn't suggest <iterator>.
-#include <iterator>                     // for find
+#include <iterator>                     // for inserter
 #include <map>                          // for _Rb_tree_const_iterator, etc
 #include <utility>                      // for pair, make_pair, operator>
 #include <vector>                       // for vector, vector<>::iterator, etc
@@ -23,18 +22,18 @@
 #include "iwyu_lexer_utils.h"
 #include "iwyu_location_util.h"
 #include "iwyu_path_util.h"
-#include "iwyu_preprocessor.h"  // IWYU pragma: keep
+#include "iwyu_preprocessor.h"
 #include "iwyu_stl_util.h"
 #include "iwyu_string_util.h"
 #include "iwyu_verrs.h"
-// TODO(wan): remove this once the IWYU bug is fixed.
-// IWYU pragma: no_include "foo/bar/baz.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
 
 namespace include_what_you_use {
@@ -57,6 +56,7 @@ using clang::ObjCProtocolDecl;
 using clang::RecordDecl;
 using clang::SourceLocation;
 using clang::SourceRange;
+using clang::TagDecl;
 using clang::TemplateDecl;
 using clang::UsingDecl;
 using llvm::cast;
@@ -88,8 +88,12 @@ class OutputLine {
                    symbols_.end());
   }
 
-  size_t line_length() const { return line_.size(); }
-  bool needs_alignment() const { return !symbols_.empty(); }
+  size_t line_length() const {
+    return line_.size();
+  }
+  bool needs_alignment() const {
+    return !symbols_.empty();
+  }
   void add_prefix(const string& prefix) { line_ = prefix + line_; }
   string printable_line(size_t min_length, size_t max_length) const;
 
@@ -151,6 +155,16 @@ const FakeNamedDecl* FakeNamedDeclIfItIsOne(const clang::NamedDecl* decl) {
   return GetOrDefault(g_fake_named_decl_map, decl, nullptr);
 }
 
+std::string PrintableUnderlyingType(const EnumDecl* enum_decl) {
+  if (const clang::TypeSourceInfo* type_source_info =
+          enum_decl->getIntegerTypeSourceInfo()) {
+    return " : " + type_source_info->getType().getAsString(
+                       enum_decl->getASTContext().getPrintingPolicy());
+  }
+
+  return std::string();
+}
+
 }  // anonymous namespace
 
 FakeNamedDecl::FakeNamedDecl(const string& kind_name, const string& qual_name,
@@ -169,11 +183,17 @@ FakeNamedDecl::FakeNamedDecl(const string& kind_name, const string& qual_name,
 // virtual.  Hence we define the following helpers to dispatch the
 // call ourselves.
 
-string GetKindName(const clang::TagDecl* tag_decl) {
+string GetKindName(const TagDecl* tag_decl) {
   const clang::NamedDecl* const named_decl = tag_decl;
   if (const FakeNamedDecl* fake = FakeNamedDeclIfItIsOne(named_decl)) {
     return fake->kind_name();
   }
+
+  if (const auto* enum_decl = dyn_cast<EnumDecl>(tag_decl)) {
+    if (enum_decl->isScoped())
+      return enum_decl->isScopedUsingClassTag() ? "enum class" : "enum struct";
+  }
+
   return tag_decl->getKindName().str();
 }
 
@@ -324,9 +344,9 @@ void OneUse::SetPublicHeaders() {
       symbol_name_, use_path);
   if (public_headers_.empty())
     public_headers_ = picker.GetCandidateHeadersForFilepathIncludedFrom(
-        decl_filepath_, use_path);
+        decl_filepath(), use_path);
   if (public_headers_.empty())
-    public_headers_.push_back(ConvertToQuotedInclude(decl_filepath_));
+    public_headers_.push_back(ConvertToQuotedInclude(decl_filepath()));
 }
 
 const vector<string>& OneUse::public_headers() {
@@ -360,7 +380,7 @@ string PrintablePtr(const void* ptr) {
   return "";
 }
 
-// Helpers for printing a forward declaration of a record type or
+// Helpers for printing a forward declaration of a tag type or
 // record type template that can be put in source code.  The hierarchy
 // of the Decl classes used in these helpers looks like:
 //
@@ -371,8 +391,8 @@ string PrintablePtr(const void* ptr) {
 //       `-- TagDecl           (class, struct, union, enum)
 //           `-- RecordDecl    (class, struct, union)
 
-// Given a NamedDecl that presents a (possibly template) record
-// (i.e. class, struct, or union) type declaration, and the print-out
+// Given a NamedDecl that presents a (possibly template) tag
+// (i.e. class, struct, union, or enum) type declaration, and the print-out
 // of its (possible) template parameters and kind (e.g. "template
 // <typename T> struct"), returns its forward declaration line.
 string PrintForwardDeclare(const NamedDecl* decl,
@@ -383,10 +403,15 @@ string PrintForwardDeclare(const NamedDecl* decl,
     return tpl_params_and_kind + " " + fake->qual_name() + ";";
   }
 
-  CHECK_((isa<RecordDecl>(decl) || isa<TemplateDecl>(decl)) &&
-         "IWYU only allows forward declaring (possibly template) record types");
+  CHECK_((isa<TagDecl>(decl) || isa<TemplateDecl>(decl)) &&
+         "IWYU only allows forward declaring (possibly template) tag types");
 
-  std::string fwd_decl = std::string(decl->getName()) + ";";
+  std::string fwd_decl = std::string(decl->getName());
+  if (const auto* enum_decl = dyn_cast<EnumDecl>(decl)) {
+    fwd_decl += PrintableUnderlyingType(enum_decl);
+  }
+  fwd_decl += ";";
+
   bool seen_namespace = false;
   // Anonymous namespaces are not using the more concise syntax.
   bool concat_namespaces = cxx17ns && !decl->isInAnonymousNamespace();
@@ -435,9 +460,9 @@ string PrintForwardDeclare(const NamedDecl* decl,
   return fwd_decl;
 }
 
-// Given a RecordDecl, return the line that could be put in source
-// code to forward-declare the record type, e.g. "namespace ns { class Foo; }".
-string MungedForwardDeclareLineForNontemplates(const RecordDecl* decl) {
+// Given a TagDecl, return the line that could be put in source
+// code to forward-declare the type, e.g. "namespace ns { class Foo; }".
+string MungedForwardDeclareLineForNontemplates(const TagDecl* decl) {
   return PrintForwardDeclare(decl, GetKindName(decl), GlobalFlags().cxx17ns);
 }
 
@@ -457,30 +482,29 @@ string MungedForwardDeclareLineForTemplates(const TemplateDecl* decl) {
   raw_string_ostream ostream(line);
   decl->print(ostream);   // calls DeclPrinter
   line = ostream.str();
+
+  // Remove "final" specifier which isn't needed for forward
+  // declarations.
+  ReplaceAll(&line, " final ", " ");
+
   // Get rid of the superclasses, if any (this will nix the body too).
   line = Split(line, " :", 2)[0];
   // Get rid of the template body, if any (true if no superclasses).
   line = Split(line, " {", 2)[0];
-
-  // Remove "final" specifier which isn't needed for forward
-  // declarations.
-  const char kFinalSpecifier[] = " final ";
-  string::size_type final_pos = line.find(kFinalSpecifier);
-  if (final_pos != string::npos) {
-    line.replace(final_pos, sizeof(kFinalSpecifier), " ");
-  }
 
   // The template name is now the last word on the line.  Replace it
   // by its fully-qualified form.
   const string::size_type name = line.rfind(' ');
   CHECK_(name != string::npos && "Unexpected printable template-type");
 
-  return PrintForwardDeclare(decl, line.substr(0, name), GlobalFlags().cxx17ns);
+  line = line.substr(0, name);
+
+  return PrintForwardDeclare(decl, line, GlobalFlags().cxx17ns);
 }
 
 string MungedForwardDeclareLine(const NamedDecl* decl) {
-  if (const RecordDecl* rec_decl = DynCastFrom(decl))
-    return MungedForwardDeclareLineForNontemplates(rec_decl);
+  if (const TagDecl* tag_decl = DynCastFrom(decl))
+    return MungedForwardDeclareLineForNontemplates(tag_decl);
   else if (const TemplateDecl* template_decl = DynCastFrom(decl))
     return MungedForwardDeclareLineForTemplates(template_decl);
   else if (const ObjCInterfaceDecl* objc_decl = DynCastFrom(decl))
@@ -595,9 +619,9 @@ void IwyuFileInfo::AddInclude(const clang::FileEntry* includee,
 void IwyuFileInfo::AddForwardDeclare(const clang::NamedDecl* fwd_decl,
                                      bool definitely_keep_fwd_decl) {
   CHECK_(fwd_decl && "forward_declare_decl unexpectedly nullptr");
-  CHECK_((isa<ClassTemplateDecl>(fwd_decl) || isa<RecordDecl>(fwd_decl) ||
+  CHECK_((isa<ClassTemplateDecl>(fwd_decl) || isa<TagDecl>(fwd_decl) ||
           isa<ObjCContainerDecl>(fwd_decl)) &&
-         "Can only forward declare classes and class templates");
+         "Can only forward declare tag types and class templates");
   lines_.push_back(OneIncludeOrForwardDeclareLine(fwd_decl));
   lines_.back().set_present();
   if (definitely_keep_fwd_decl)
@@ -626,7 +650,7 @@ static void LogSymbolUse(const string& prefix, const OneUse& use) {
   string decl_loc;
   string printable_ptr;
   if (use.decl()) {
-    decl_loc = PrintableLoc(GetLocation(use.decl()));
+    decl_loc = PrintableLoc(use.decl_loc());
     printable_ptr = internal::PrintablePtr(use.decl());
   } else {
     decl_loc = use.decl_filepath();
@@ -663,9 +687,10 @@ void IwyuFileInfo::ReportFullSymbolUse(SourceLocation use_loc,
 }
 
 void IwyuFileInfo::ReportFullSymbolUse(SourceLocation use_loc,
-                                       const string& dfn_filepath,
+                                       const FileEntry* dfn_file,
                                        const string& symbol) {
-  symbol_uses_.push_back(OneUse(symbol, nullptr, dfn_filepath, use_loc));
+  symbol_uses_.push_back(
+      OneUse(symbol, dfn_file, GetFilePath(dfn_file), use_loc));
   LogSymbolUse("Marked full-info use of symbol", symbol_uses_.back());
 }
 
@@ -759,16 +784,16 @@ bool DeclCanBeForwardDeclared(const Decl* decl, string* reason) {
     // Class templates can always be forward-declared.
   } else if (isa<ObjCContainerDecl>(decl)) {
     // Objective-C types can always be forward-declared.
-  } else if (const auto* record = dyn_cast<RecordDecl>(decl)) {
-    // Record decls can be forward-declared unless they denote a lambda
-    // expression; these have no type name to forward-declare.
-    if (record->isLambda()) {
-      *reason = "is a lambda";
+  } else if (const auto* tag_decl = dyn_cast<TagDecl>(decl)) {
+    // Tag decls can be forward-declared unless they don't have
+    // a type name to forward-declare (that includes lambdas).
+    if (!tag_decl->getIdentifier()) {
+      *reason = "declaration has no name";
       return false;
     }
   } else {
     // Other decl types are not forward-declarable.
-    *reason = "not a record or class template";
+    *reason = "not a record, enumeration or class template";
     return false;
   }
 
@@ -985,40 +1010,46 @@ set<string> CalculateMinimalIncludes(
 // A4) If the file containing the use has a pragma inhibiting the forward
 //     declaration of the symbol, change the use to a full info use in order
 //     to make sure that the compiler can see some declaration of the symbol.
-// A5) If a nested class, discard this use (the parent class declaration
-//     is sufficient).
+// A5) If declaration is nested inside a class or a function, discard this use.
+//     The containing class/function is required to use the nested decl, and
+//     so will force use of the containing header.
 // A6) If any of the redeclarations of this declaration is in the same
 //     file as the use (and before it), and is actually a definition,
 //     discard the forward-declare use.
-// A7) If --no_fwd_decls has been passed, recategorize as a full use.
+// A7) If any redeclaration is marked with IWYU pragma: export, mark as a
+//     full use of this decl to keep its containing file included.
+// A8) If --no_fwd_decls has been passed, recategorize as a full use.
 
 // Trimming symbol uses (1st pass):
-// B1) If the definition of a full use comes after the use, change the
+// B1) If declaration is nested inside a function, discard this use.
+//     The function is required to use the nested decl, and so will force use of
+//     the containing header.
+// B2) If the definition of a full use comes after the use, change the
 //     full use to a forward-declare use that points to a fwd-decl
 //     that comes before the use.  (This is for cases like typedefs
 //     where iwyu demands a full use but the language allows a
 //     forward-declare.)
-// B2) Discard symbol uses of a symbol defined in the same file it's used.
-//     If the symbol is an enum, typedef, function, or var -- every decl
-//     that is re-declarable except for RecordDecl -- discard if *any*
+// B3) Discard symbol uses of a symbol defined in the same file it's used.
+//     If the symbol is a typedef, function, or var -- every decl
+//     that is re-declarable except for TagDecl -- discard if *any*
 //     declaration is in the same file as the use.
-// B3) Discard symbol uses for builtin symbols ('__builtin_memcmp') and
+// B4) Discard symbol uses for builtin symbols ('__builtin_memcmp') and
 //     for operator new and operator delete (excluding placement new),
 //     which are effectively built-in even though they're in <new>.
-// B4) Discard symbol uses for member functions that live in the same
+// B5) Discard symbol uses for member functions that live in the same
 //     file as the class they're part of (the parent check suffices).
-// B5) Sanity check: Discard 'backwards' #includes.  These are
+// B6) Sanity check: Discard 'backwards' #includes.  These are
 //     #includes where we say a.h should #include b.h, but b.h is
 //     already #including a.h.  This happens when iwyu attributes a
 //     use to the wrong file.
-// B6) In --transitive_includes_only mode, discard 'new' #includes.
+// B7) In --transitive_includes_only mode, discard 'new' #includes.
 //     These are #includes where we say a.h should #include b.h, but
 //     a.h does not see b.h in its transitive #includes.  (Note: This
 //     happens before include-picker mapping, so it's still possible to
 //     see 'new' includes via a manual mapping.)
-// B1') Discard macro uses in the same file as the definition (B2 redux).
-// B2') Discard macro uses that form a 'backwards' #include (B5 redux).
-// B3') Discard macro uses from a 'new' #include (B6 redux).
+// B1') Discard macro uses in the same file as the definition (B3 redux).
+// B2') Discard macro uses that form a 'backwards' #include (B6 redux).
+// B3') Discard macro uses from a 'new' #include (B7 redux).
 
 // Determining 'desired' #includes:
 // C1) Get a list of 'effective' direct includes.  For most files, it's
@@ -1068,15 +1099,15 @@ void ProcessForwardDeclare(OneUse* use,
     return;
   }
   // This is useful for the subsequent tests -- let's normalize some types.
-  const RecordDecl* record_decl = DynCastFrom(use->decl());
+  const TagDecl* tag_decl = DynCastFrom(use->decl());
   const ClassTemplateDecl* tpl_decl = DynCastFrom(use->decl());
   const ClassTemplateSpecializationDecl* spec_decl = DynCastFrom(use->decl());
   if (spec_decl)
     tpl_decl = spec_decl->getSpecializedTemplate();
   if (tpl_decl)
-    record_decl = tpl_decl->getTemplatedDecl();
+    tag_decl = tpl_decl->getTemplatedDecl();
 
-  const NamedDecl* class_decl = record_decl;
+  const NamedDecl* class_decl = tag_decl;
   const ObjCContainerDecl* objc_decl = DynCastFrom(use->decl());
   if (objc_decl)
     class_decl = objc_decl;
@@ -1084,7 +1115,7 @@ void ProcessForwardDeclare(OneUse* use,
   // (A2) If it has default template parameters, recategorize as a full use.
   // Suppress this if there's no definition for this class (so can't full-use).
   if (tpl_decl && HasDefaultTemplateParameters(tpl_decl) &&
-      GetDefinitionForClass(tpl_decl) != nullptr) {
+      GetTagDefinition(tpl_decl) != nullptr) {
     VERRS(6) << "Moving " << use->symbol_name()
              << " from fwd-decl use to full use: has default template param"
              << " (" << use->PrintableUseLoc() << ")\n";
@@ -1119,8 +1150,9 @@ void ProcessForwardDeclare(OneUse* use,
     }
   }
 
-  // (A5) If using a nested class, discard this use.
-  if (record_decl && IsNestedClass(record_decl)) {
+  // (A5) If using a nested class or a type declared inside a function, discard
+  // this use.
+  if (tag_decl && IsNestedClass(tag_decl)) {
     // iwyu will require the full type of the parent class when it
     // recurses on the qualifier (any use of Foo::Bar requires the
     // full type of Foo).  So if we're forward-declared inside Foo,
@@ -1138,20 +1170,25 @@ void ProcessForwardDeclare(OneUse* use,
       use->set_ignore_use();
       return;
     }
+  } else if (IsDeclaredInsideFunction(tag_decl)) {
+    VERRS(6) << "Ignoring fwd-decl use of " << use->symbol_name() << " ("
+             << use->PrintableUseLoc() << "): declared inside a "
+             << "function\n";
+    use->set_ignore_use();
+    return;
   }
 
   // (A6) If a definition exists earlier in this file, discard this use.
   // Note: for the 'earlier' checks, what matters is the *instantiation*
   // location.
-  const set<const NamedDecl*> redecls = GetClassRedecls(class_decl);
-  for (const NamedDecl* redecl : redecls) {
-    CHECK_((isa<RecordDecl>(redecl) || isa<ObjCInterfaceDecl>(redecl) ||
+  const set<const NamedDecl*> redecls = GetTagRedecls(tag_decl);
+    CHECK_((isa<TagDecl>(redecl) || isa<ObjCInterfaceDecl>(redecl) ||
             isa<ObjCProtocolDecl>(redecl)) &&
-           "GetClassRedecls has redecls of wrong type");
+           "GetTagRedecls has redecls of wrong type");
 
     bool isCompleteDefinition = false;
-    if (const RecordDecl* record_redecl = DynCastFrom(redecl)) {
-      isCompleteDefinition = record_redecl->isCompleteDefinition();
+    if (const TagDecl* tag_redecl = DynCastFrom(redecl)) {
+      isCompleteDefinition = tag_redecl->isCompleteDefinition();
     } else if (const clang::ObjCInterfaceDecl* objc_redecl =
                    DynCastFrom(redecl)) {
       isCompleteDefinition = objc_redecl->isThisDeclarationADefinition();
@@ -1170,7 +1207,20 @@ void ProcessForwardDeclare(OneUse* use,
     }
   }
 
-  // (A7) If --no_fwd_decls has been passed, and a decl can be found in one of
+  // (A7) If any arbitrary redeclaration is marked with IWYU pragma: export,
+  // reset use as a full use of this decl to keep its containing file included.
+  if (!use->is_full_use()) {
+    for (const Decl* redecl : use->decl()->redecls()) {
+      const auto* decl = cast<NamedDecl>(redecl);
+      if (preprocessor_info->ForwardDeclareIsExported(decl)) {
+        use->reset_decl(decl);
+        use->set_full_use();
+        break;
+      }
+    }
+  }
+
+  // (A8) If --no_fwd_decls has been passed, and a decl can be found in one of
   // the headers, suggest that header, and recategorize as a full use. If we can
   // only find a decl in this file, it must be a self-sufficent decl being used,
   // so we can just let IWYU do its work, and there is no need to recategorize.
@@ -1208,15 +1258,25 @@ void ProcessFullUse(OneUse* use,
   if (use->ignore_use())   // we're already ignoring it
     return;
 
+  // (B1) If declaration is inside a function, it can only be seen via said
+  // function. Discard this use and assume the use of the function provides.
+  if (IsDeclaredInsideFunction(use->decl())) {
+    VERRS(6) << "Ignoring full use of " << use->symbol_name() << " ("
+             << use->PrintableUseLoc() << "): declared inside a "
+             << "function\n";
+    use->set_ignore_use();
+    return;
+  }
+
   // We normally ignore uses for builtins, but when there is a mapping defined
   // for the symbol, we should respect that.  So, we need to determine whether
   // the symbol has any mappings.
-  bool is_builtin_function = IsBuiltinFunction(use->decl(), use->symbol_name());
+  bool is_builtin_function = IsBuiltinFunction(use->decl());
 
   bool is_builtin_function_with_mappings =
       is_builtin_function && HasMapping(use->symbol_name());
 
-  // (B1) If the definition is after the use, re-point to a prior decl.
+  // (B2) If the definition is after the use, re-point to a prior decl.
   // If iwyu followed the language precisely, this wouldn't be
   // necessary: code wouldn't compile if a full-use didn't have the
   // definition handy yet.  But in fact, iwyu sometimes requires a full
@@ -1249,10 +1309,10 @@ void ProcessFullUse(OneUse* use,
     return;
   }
 
-  // (B2) Discard symbol uses of a symbol defined in the same file it's used.
+  // (B3) Discard symbol uses of a symbol defined in the same file it's used.
   // If the symbol can be declared in multiple places, we count it if
   // *any* declaration is in the same file, unless the symbol is a
-  // class.  (Every other kind of redeclarable symbol, such as
+  // class or enum.  (Every other kind of redeclarable symbol, such as
   // functions, have the property that a decl is the same as a
   // definition from iwyu's point of view.)  We don't bother with
   // RedeclarableTemplate<> types (FunctionTemplateDecl), since for
@@ -1262,24 +1322,24 @@ void ProcessFullUse(OneUse* use,
   // declarations.
   if (!(use->flags() & UF_FunctionDfn) && !is_builtin_function_with_mappings) {
     set<const NamedDecl*> all_redecls;
-    if (isa<RecordDecl>(use->decl()) || isa<ClassTemplateDecl>(use->decl()) ||
+    if (isa<TagDecl>(use->decl()) || isa<ClassTemplateDecl>(use->decl()) ||
         isa<ObjCInterfaceDecl>(use->decl()) ||
         isa<ObjCProtocolDecl>(use->decl()))
       all_redecls.insert(use->decl());  // for classes, just consider the dfn
     else
-      all_redecls = GetNonclassRedecls(use->decl());
+      all_redecls = GetNonTagRedecls(use->decl());
     for (const NamedDecl* redecl : all_redecls) {
       if (DeclIsVisibleToUseInSameFile(redecl, *use)) {
         VERRS(6) << "Ignoring use of " << use->symbol_name() << " ("
                  << use->PrintableUseLoc() << "): definition is present: "
-                 << PrintableLoc(GetLocation(use->decl())) << "\n";
+                 << PrintableLoc(use->decl_loc()) << "\n";
         use->set_ignore_use();
         return;
       }
     }
   }
 
-  // (B3) Discard symbol uses for builtin symbols, including new/delete and
+  // (B4) Discard symbol uses for builtin symbols, including new/delete and
   // template builtins.
   if (isa<clang::BuiltinTemplateDecl>(use->decl())) {
     VERRS(6) << "Ignoring use of " << use->symbol_name()
@@ -1310,11 +1370,11 @@ void ProcessFullUse(OneUse* use,
     }
   }
 
-  // (B4) Discard symbol uses for member functions in the same file as parent.
-  if (const CXXMethodDecl* method_dfn = DynCastFrom(use->decl())) {
+  // (B5) Discard symbol uses for class members in the same file as parent.
+  if (const CXXRecordDecl* parent_decl =
+          DynCastFrom(use->decl()->getDeclContext())) {
     // See if we also recorded a use of the parent.
-    const NamedDecl* parent_dfn
-        = GetDefinitionAsWritten(method_dfn->getParent());
+    const NamedDecl* parent_dfn = GetDefinitionAsWritten(parent_decl);
 
     const FileEntry* decl_file_entry = GetFileEntry(use->decl_loc());
     const FileEntry* parent_file_entry =
@@ -1328,14 +1388,14 @@ void ProcessFullUse(OneUse* use,
     // mapping to choose, and it's important we use the one that iwyu
     // will pick later).  TODO(csilvers): figure out that case too.
     const IncludePicker& picker = GlobalIncludePicker();
-    const vector<MappedInclude>& method_dfn_files =
+    const vector<MappedInclude>& member_dfn_files =
         picker.GetCandidateHeadersForFilepath(GetFilePath(decl_file_entry));
     const vector<MappedInclude>& parent_dfn_files =
         picker.GetCandidateHeadersForFilepath(GetFilePath(parent_file_entry));
     bool same_file;
-    if (method_dfn_files.size() == 1 && parent_dfn_files.size() == 1) {
-      same_file = (method_dfn_files[0].quoted_include ==
-          parent_dfn_files[0].quoted_include);
+    if (member_dfn_files.size() == 1 && parent_dfn_files.size() == 1) {
+      same_file = (member_dfn_files[0].quoted_include ==
+                   parent_dfn_files[0].quoted_include);
     } else {
       // Fall back on just checking the filenames: can't figure out public.
       same_file = (decl_file_entry == parent_file_entry);
@@ -1348,7 +1408,7 @@ void ProcessFullUse(OneUse* use,
     }
   }
 
-  // (B5) Discard uses of symbols that form a 'backwards' #include.
+  // (B6) Discard uses of symbols that form a 'backwards' #include.
   // This means that we say a.h is using a symbol in b.h, but b.h
   // already #includes a.h (either directly or indirectly).  Since the
   // include graph should be acyclic, this means that iwyu messed up,
@@ -1367,7 +1427,7 @@ void ProcessFullUse(OneUse* use,
     return;
   }
 
-  // (B6) In --transitive_includes_only mode, discard 'new' #includes.
+  // (B7) In --transitive_includes_only mode, discard 'new' #includes.
   // In practice, if we tell a.h to add an #include that is not in its
   // transitive includes, it's usually (but not always) an iwyu error
   // of some sort.  So we allow a flag to discard such recommendations.
@@ -1445,16 +1505,16 @@ void CalculateIwyuForForwardDeclareUse(
   if (const ObjCContainerDecl* objc_decl = DynCastFrom(use->decl()))
     class_decl = objc_decl;
 
-  // If this record is defined in one of the desired_includes, mark that
+  // If this tag type is defined in one of the desired_includes, mark that
   // fact.  Also if it's defined in one of the actual_includes.
   bool dfn_is_in_desired_includes = false;
   bool dfn_is_in_actual_includes = false;
 
-  const NamedDecl* dfn = GetDefinitionForClass(use->decl());
+  const NamedDecl* dfn = GetTagDefinition(use->decl());
   if (dfn) {
-    vector<string> headers
-      = GlobalIncludePicker().GetCandidateHeadersForFilepathIncludedFrom(
-          GetFilePath(dfn), GetFilePath(use->use_loc()));
+    vector<string> headers =
+        GlobalIncludePicker().GetCandidateHeadersForFilepathIncludedFrom(
+            GetFilePath(dfn), GetFilePath(use->use_loc()));
     for (const string& header : headers) {
       if (ContainsKey(desired_includes, header))
         dfn_is_in_desired_includes = true;
@@ -1469,7 +1529,7 @@ void CalculateIwyuForForwardDeclareUse(
     }
   }
 
-  // We also want to know if *any* redecl of this record is defined
+  // We also want to know if *any* redecl of this type is defined
   // in the same file as the use (and before it).
   const set<const NamedDecl*>& redecls = GetClassRedecls(class_decl);
   for (const NamedDecl* redecl : redecls) {
@@ -1518,8 +1578,8 @@ void CalculateIwyuForForwardDeclareUse(
 
   // Be sure to store as a TemplateClassDecl if we're a templated
   // class.
-  if (const ClassTemplateSpecializationDecl* spec_decl
-      = DynCastFrom(use->decl())) {
+  if (const ClassTemplateSpecializationDecl* spec_decl =
+          DynCastFrom(use->decl())) {
     use->reset_decl(spec_decl->getSpecializedTemplate());
   } else if (const CXXRecordDecl* cxx_decl = DynCastFrom(use->decl())) {
     if (cxx_decl->getDescribedClassTemplate())
@@ -1639,8 +1699,8 @@ void IwyuFileInfo::CalculateIwyuViolations(vector<OneUse>* uses) {
   // The 'effective' direct includes are defined to be the current
   // includes of associated, plus us.  This is only used to decide
   // when to give iwyu warnings.
-  const set<string> effective_direct_includes
-      = Union(associated_direct_includes, direct_includes());
+  const set<string> effective_direct_includes =
+      Union(associated_direct_includes, direct_includes());
 
   // (C2) + (C3) Find the minimal 'set cover' for all symbol uses.
   const set<string> desired_set_cover = internal::CalculateMinimalIncludes(
@@ -1814,7 +1874,11 @@ void CalculateDesiredIncludesAndForwardDeclares(
       auto range = include_map.equal_range(use.suggested_header());
       for (auto it = range.first; it != range.second; ++it) {
         it->second->set_desired();
-        it->second->AddSymbolUse(use.short_symbol_name());
+        if (GlobalFlags().comments_with_namespace) {
+          it->second->AddSymbolUse(use.symbol_name());
+        } else {
+          it->second->AddSymbolUse(use.short_symbol_name());
+        }
       }
     }
   }
@@ -2054,7 +2118,7 @@ size_t PrintableDiffs(const string& filename,
       break;
     }
   }
-  if (no_adds_or_deletes) {
+  if (no_adds_or_deletes && !GlobalFlags().update_comments) {
     output = "\n(" + filename + " has correct #includes/fwd-decls)\n";
     return 0;
   }
@@ -2161,10 +2225,17 @@ void IwyuFileInfo::HandlePreprocessingDone() {
                       << " as public header for " << private_include
                       << " because latter is already marked as public,"
                       << " though uses macro defined by includer.\n";
+      } else if (file_ == macro_use_includee) {
+        ERRSYM(file_) << "Skip marking " << quoted_file_
+                      << " as public header for " << private_include
+                      << " because they are the same file.\n";
       } else {
         ERRSYM(file_) << "Mark " << quoted_file_
                       << " as public header for " << private_include
                       << " because used macro is defined by includer.\n";
+        VERRS(8) << "Adding dynamic mapping for reverse macro dependency: "
+                 << "(" << GetFilePath(macro_use_includee) << ") -> ("
+                 << GetFilePath(file_) << ")\n";
         MutableGlobalIncludePicker()->AddMapping(
             private_include, MappedInclude(quoted_file_, GetFilePath(file_)));
         MutableGlobalIncludePicker()->MarkIncludeAsPrivate(private_include);

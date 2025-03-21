@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 ##===--- iwyu_test_util.py - include-what-you-use test framework ----------===##
 #
@@ -10,16 +10,6 @@
 ##===----------------------------------------------------------------------===##
 
 """Utilities for writing tests for IWYU.
-
-This script has been tested with python 2.7, 3.1.3 and 3.2.
-In order to support all of these platforms there are a few unusual constructs:
- * print statements require parentheses
- * standard output must be decoded as utf-8
- * range() must be used in place of xrange()
- * _PortableNext() is used to obtain next iterator value
-
-There is more detail on some of these issues at:
-http://diveintopython3.org/porting-code-to-python-3-with-2to3.html
 """
 
 __author__ = 'wan@google.com (Zhanyong Wan)'
@@ -39,24 +29,20 @@ _ACTUAL_DIAGNOSTICS_RE = re.compile(r'^(.*?):(\d+):\d+:\s*'
 # This is the final summary output that iwyu.cc produces when --verbose >= 1
 # The summary for a given source file should appear in that source file,
 # surrounded by '/**** IWYU_SUMMARY' and '***** IWYU_SUMMARY */'.
+# The leading summary line may also have an expected exit-code in parentheses
+# after the summary marker: '/**** IWYU_SUMMARY(10)'.
 _EXPECTED_SUMMARY_START_RE = re.compile(r'/\*+\s*IWYU_SUMMARY')
+_EXPECTED_SUMMARY_EXIT_CODE_RE = re.compile(r'/\*+\s*IWYU_SUMMARY\((\d+)\)')
 _EXPECTED_SUMMARY_END_RE = re.compile(r'\**\s*IWYU_SUMMARY\s*\*+/')
 _ACTUAL_SUMMARY_START_RE = re.compile(r'^(.*?) should add these lines:$')
 _ACTUAL_SUMMARY_END_RE = re.compile(r'^---$')
 _ACTUAL_REMOVAL_LIST_START_RE = re.compile(r'.* should remove these lines:$')
 _NODIFFS_RE = re.compile(r'^\((.*?) has correct #includes/fwd-decls\)$')
 
-# This is an IWYU_ARGS line that specifies launch arguments 
-# for a test in its source file.
-# Example:
+# This is an IWYU_ARGS line that specifies launch arguments for a test in its
+# source file. Example:
 # // IWYU_ARGS: -Xiwyu --mapping_file=... -I .
 _IWYU_TEST_RUN_ARGS_RE = re.compile(r'^//\sIWYU_ARGS:\s(.*)$')
-
-def _PortableNext(iterator):
-  if hasattr(iterator, 'next'):
-    iterator.next()  # Python 2.4-2.6
-  else:
-    next(iterator)   # Python 3
 
 
 def _Which(program, paths):
@@ -128,7 +114,7 @@ def _GetCommandOutput(command):
   stdout, _ = p.communicate()
   lines = stdout.decode("utf-8").splitlines(True)
   lines = [line.replace(os.linesep, '\n') for line in lines]
-  return lines
+  return p.returncode, lines
 
 
 def _GetMatchingLines(regex, file_names):
@@ -290,6 +276,16 @@ def _GetExpectedSummaries(files):
   return expected_summaries
 
 
+def _GetExpectedExitCode(main_file):
+  with open(main_file, 'r') as fh:
+    for line in fh:
+      m = _EXPECTED_SUMMARY_EXIT_CODE_RE.match(line)
+      if m:
+        res = int(m.group(1))
+        return res
+  return None
+
+
 def _GetActualSummaries(output):
   """Returns a map: source file => list of iwyu summary lines."""
 
@@ -393,7 +389,7 @@ def _CompareExpectedAndActualSummaries(expected_summaries, actual_summaries):
     this_failure = difflib.unified_diff(expected_summaries.get(loc, []),
                                         actual_summaries.get(loc, []))
     try:
-      _PortableNext(this_failure)     # read past the 'what files are this' header
+      next(this_failure)     # read past the 'what files are this' header
       failures.append('\n')
       failures.append('Unexpected summary diffs for %s:\n' % loc)
       failures.extend(this_failure)
@@ -443,7 +439,6 @@ def TestIwyuOnRelativeFile(cc_file, cpp_files_to_check, verbose=False):
   if env_verbose_level:
     verbosity_flags = ['-Xiwyu', '--verbose=' + env_verbose_level]
 
-  # TODO(csilvers): verify that has exit-status 0.
   cmd = '%s %s %s %s %s' % (
     _ShellQuote(_GetIwyuPath()),
     # Require verbose level 3 so that we can verify the individual diagnostics.
@@ -457,9 +452,15 @@ def TestIwyuOnRelativeFile(cc_file, cpp_files_to_check, verbose=False):
     cc_file)
   if verbose:
     print('>>> Running %s' % cmd)
-  output = _GetCommandOutput(cmd)
+  exit_code, output = _GetCommandOutput(cmd)
   print(''.join(output))
   sys.stdout.flush()      # don't commingle this output with the failure output
+
+  # Verify exit code if requested
+  expected_exit_code = _GetExpectedExitCode(cc_file)
+  if expected_exit_code is not None and exit_code != expected_exit_code:
+    raise AssertionError('Unexpected exit code, wanted %d, was %d' %
+                         (expected_exit_code, exit_code))
 
   expected_diagnostics = _GetMatchingLines(
       _EXPECTED_DIAGNOSTICS_RE, cpp_files_to_check)

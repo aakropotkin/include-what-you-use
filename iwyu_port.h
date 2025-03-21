@@ -26,7 +26,7 @@ class FatalMessageEmitter {
   FatalMessageEmitter(const char* file, int line, const char* message) {
     stream() << file << ":" << line << ": Assertion failed: " << message;
   }
-  LLVM_ATTRIBUTE_NORETURN ~FatalMessageEmitter() {
+  [[noreturn]] ~FatalMessageEmitter() {
     stream() << "\n";
     ::abort();
 #ifdef LLVM_BUILTIN_UNREACHABLE
@@ -35,7 +35,9 @@ class FatalMessageEmitter {
     LLVM_BUILTIN_UNREACHABLE;
 #endif
   }
-  llvm::raw_ostream& stream() { return llvm::errs(); }
+  llvm::raw_ostream& stream() {
+    return llvm::errs();
+  }
 };
 
 // Helper class that allows an ostream to 'appear' as a void expression.

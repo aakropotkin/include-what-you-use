@@ -34,6 +34,8 @@
 //    f) // IWYU pragma: no_forward_declare foo::Bar
 //    g) // IWYU pragma: friend <regexp>
 //       // IWYU pragma: friend "<regexp>" -- needed if spaces in regexp.
+//    h) // IWYU pragma: begin_keep
+//    i) // IWYU pragma: end_keep
 // 'Annotation' constructs:
 //    h) #include "foo/bar/baz.h"  // IWYU pragma: export
 //    i) #include "foo/bar/baz.h"  // IWYU pragma: keep
@@ -78,6 +80,7 @@
 namespace clang {
 class FileEntry;
 class MacroInfo;
+class NamedDecl;
 }  // namespace clang
 
 namespace include_what_you_use {
@@ -87,6 +90,7 @@ using std::set;
 using std::stack;
 using std::string;
 using std::vector;
+using std::multimap;
 
 class IwyuPreprocessorInfo : public clang::PPCallbacks,
                              public clang::CommentHandler {
@@ -169,6 +173,12 @@ class IwyuPreprocessorInfo : public clang::PPCallbacks,
   bool ForwardDeclareIsInhibited(
       const clang::FileEntry* file, const string& qualified_symbol_name) const;
 
+  // Return true if the fwd decl is marked with "IWYU pragma: keep".
+  bool ForwardDeclareIsMarkedKeep(const clang::NamedDecl* decl) const;
+
+  // Return true if the fwd decl is marked with "IWYU pragma: export".
+  bool ForwardDeclareIsExported(const clang::NamedDecl* decl) const;
+
  protected:
   // Preprocessor event handlers called by Clang.
   void MacroExpands(const clang::Token& macro_use_token,
@@ -196,9 +206,10 @@ class IwyuPreprocessorInfo : public clang::PPCallbacks,
 
   void InclusionDirective(clang::SourceLocation hash_loc,
                           const clang::Token& include_token,
-                          llvm::StringRef filename, bool is_angled,
+                          llvm::StringRef filename,
+                          bool is_angled,
                           clang::CharSourceRange filename_range,
-                          const clang::FileEntry* file,
+                          clang::OptionalFileEntryRef file,
                           llvm::StringRef search_path,
                           llvm::StringRef relative_path,
                           const clang::Module* imported,
@@ -288,6 +299,10 @@ class IwyuPreprocessorInfo : public clang::PPCallbacks,
   // there is a pending "begin_exports" pragma.
   bool HasOpenBeginExports(const clang::FileEntry* file) const;
 
+  // Return true if at the current point in the parse of the given files,
+  // there is a pending "begin_keep" pragma.
+  bool HasOpenBeginKeep(const clang::FileEntry* file) const;
+
   // The C++ source file passed in as an argument to the compiler (as
   // opposed to other files seen via #includes).
   const clang::FileEntry* main_file_;
@@ -351,6 +366,19 @@ class IwyuPreprocessorInfo : public clang::PPCallbacks,
   // "begin_exports".  There should be at most one item in this stack
   // per file in the current inclusion chain..
   stack<clang::SourceLocation> begin_exports_location_stack_;
+
+  // For processing pragmas. It is the current stack of open "begin_keep"s.
+  // There should be at most one item in this stack per file in the current
+  // inclusion chain.
+  stack<clang::SourceLocation> begin_keep_location_stack_;
+
+  // For processing forward decls. It is a multimap containing the bounds of
+  // every keep range.
+  multimap<const clang::FileEntry*, clang::SourceRange> keep_location_ranges_;
+
+  // For processing forward decls. It is a multimap containing the bounds of
+  // every export range.
+  multimap<const clang::FileEntry*, clang::SourceRange> export_location_ranges_;
 
   // For processing associated pragma. It is the current open
   // "associated" pragma.

@@ -67,7 +67,10 @@ using std::vector;
 
 struct IncludeMapEntry;
 
+enum class RegexDialect;
 enum IncludeVisibility { kUnusedVisibility, kPublic, kPrivate };
+enum class CStdLib { None, Glibc };
+enum class CXXStdLib { None, Libstdcxx };
 
 // When a symbol or file is mapped to an include, that include is represented
 // by this struct.  It always has a quoted_include and may also have a path
@@ -93,7 +96,8 @@ class IncludePicker {
   // visibility of the respective files.
   typedef map<string, IncludeVisibility> VisibilityMap;
 
-  explicit IncludePicker(bool no_default_mappings);
+  IncludePicker(RegexDialect regex_dialect, CStdLib cstdlib,
+                CXXStdLib cxxstdlib);
 
   // ----- Routines to dynamically modify the include-picker
 
@@ -204,7 +208,7 @@ class IncludePicker {
                            const vector<string>& search_path);
 
   // Adds all hard-coded default mappings.
-  void AddDefaultMappings();
+  void AddDefaultMappings(CStdLib cstdlib, CXXStdLib cxxstdlib);
 
   // Adds a mapping from a one header to another, typically
   // from a private to a public quoted include.
@@ -319,6 +323,9 @@ class IncludePicker {
   // #include.
   map<string, clang::InclusionDirective::InclusionKind>
       quoted_include_to_inclusion_kind_map_;
+
+  // Controls regex dialect to use for mappings.
+  RegexDialect regex_dialect;
 };  // class IncludePicker
 
 }  // namespace include_what_you_use

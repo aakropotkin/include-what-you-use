@@ -24,6 +24,7 @@
 #include "iwyu_location_util.h"
 #include "iwyu_path_util.h"
 #include "iwyu_port.h"
+#include "iwyu_regex.h"
 #include "iwyu_stl_util.h"
 #include "iwyu_string_util.h"
 #include "iwyu_verrs.h"
@@ -33,7 +34,6 @@
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Regex.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/YAMLParser.h"
 #include "clang/Basic/FileManager.h"
@@ -90,38 +90,58 @@ const IncludeMapEntry libc_symbol_map[] = {
   // an option for this type.  That's the preferred #include all else
   // equal.  The visibility on the symbol-name is ignored; by convention
   // we always set it to kPrivate.
-  { "blksize_t", kPrivate, "<sys/types.h>", kPublic },
-  { "blkcnt_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "aiocb", kPrivate, "<aio.h>", kPublic },
   { "blkcnt_t", kPrivate, "<sys/types.h>", kPublic },
+  { "blkcnt_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "blksize_t", kPrivate, "<sys/types.h>", kPublic },
   { "blksize_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "cc_t", kPrivate, "<termios.h>", kPublic },
   { "clock_t", kPrivate, "<sys/types.h>", kPublic },
+  { "clock_t", kPrivate, "<sys/time.h>", kPublic },
   { "clock_t", kPrivate, "<time.h>", kPublic },
+  { "clockid_t", kPrivate, "<sys/types.h>", kPublic },
+  { "clockid_t", kPrivate, "<time.h>", kPublic },
   { "daddr_t", kPrivate, "<sys/types.h>", kPublic },
   { "daddr_t", kPrivate, "<rpc/types.h>", kPublic },
   { "dev_t", kPrivate, "<sys/types.h>", kPublic },
   { "dev_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "div_t", kPrivate, "<stdlib.h>", kPublic },
+  { "double_t", kPrivate, "<math.h>", kPublic },
   { "error_t", kPrivate, "<errno.h>", kPublic },
   { "error_t", kPrivate, "<argp.h>", kPublic },
   { "error_t", kPrivate, "<argz.h>", kPublic },
+  { "fd_set", kPrivate, "<sys/select.h>", kPublic },
+  { "fd_set", kPrivate, "<sys/time.h>", kPublic },
+  { "fenv_t", kPrivate, "<fenv.h>", kPublic },
+  { "fexcept_t", kPrivate, "<fenv.h>", kPublic },
+  { "FILE", kPrivate, "<stdio.h>", kPublic },
+  { "FILE", kPrivate, "<wchar.h>", kPublic },
+  { "float_t", kPrivate, "<math.h>", kPublic },
   { "fsblkcnt_t", kPrivate, "<sys/types.h>", kPublic },
   { "fsblkcnt_t", kPrivate, "<sys/statvfs.h>", kPublic },
   { "fsfilcnt_t", kPrivate, "<sys/types.h>", kPublic },
   { "fsfilcnt_t", kPrivate, "<sys/statvfs.h>", kPublic },
+  { "getopt", kPrivate, "<unistd.h>", kPublic },
   { "gid_t", kPrivate, "<sys/types.h>", kPublic },
   { "gid_t", kPrivate, "<grp.h>", kPublic },
   { "gid_t", kPrivate, "<pwd.h>", kPublic },
+  { "gid_t", kPrivate, "<signal.h>", kPublic },
   { "gid_t", kPrivate, "<stropts.h>", kPublic },
   { "gid_t", kPrivate, "<sys/ipc.h>", kPublic },
   { "gid_t", kPrivate, "<sys/stat.h>", kPublic },
   { "gid_t", kPrivate, "<unistd.h>", kPublic },
+  { "htonl", kPrivate, "<arpa/inet.h>", kPublic },
+  { "htons", kPrivate, "<arpa/inet.h>", kPublic },
   { "id_t", kPrivate, "<sys/types.h>", kPublic },
   { "id_t", kPrivate, "<sys/resource.h>", kPublic },
+  { "imaxdiv_t", kPrivate, "<inttypes.h>", kPublic },
+  { "intmax_t", kPrivate, "<stdint.h>", kPublic },
+  { "uintmax_t", kPrivate, "<stdint.h>", kPublic },
   { "ino64_t", kPrivate, "<sys/types.h>", kPublic },
   { "ino64_t", kPrivate, "<dirent.h>", kPublic },
   { "ino_t", kPrivate, "<sys/types.h>", kPublic },
   { "ino_t", kPrivate, "<dirent.h>", kPublic },
   { "ino_t", kPrivate, "<sys/stat.h>", kPublic },
-  { "int8_t", kPrivate, "<sys/types.h>", kPublic },
   { "int8_t", kPrivate, "<stdint.h>", kPublic },
   { "int16_t", kPrivate, "<stdint.h>", kPublic },
   { "int32_t", kPrivate, "<stdint.h>", kPublic },
@@ -132,71 +152,151 @@ const IncludeMapEntry libc_symbol_map[] = {
   { "uint64_t", kPrivate, "<stdint.h>", kPublic },
   { "intptr_t", kPrivate, "<stdint.h>", kPublic },
   { "uintptr_t", kPrivate, "<stdint.h>", kPublic },
-  { "intptr_t", kPrivate, "<unistd.h>", kPublic },
+  { "iovec", kPrivate, "<sys/uio.h>", kPublic },
+  { "iovec", kPrivate, "<sys/socket.h>", kPublic },
+  { "itimerspec", kPrivate, "<time.h>", kPublic },
+  { "itimerspec", kPrivate, "<sys/timerfd.h>", kPublic },
   { "key_t", kPrivate, "<sys/types.h>", kPublic },
   { "key_t", kPrivate, "<sys/ipc.h>", kPublic },
+  { "lconv", kPrivate, "<locale.h>", kPublic },
+  { "ldiv_t", kPrivate, "<stdlib.h>", kPublic },
+  { "lldiv_t", kPrivate, "<stdlib.h>", kPublic },
   { "max_align_t", kPrivate, "<stddef.h>", kPublic },
   { "mode_t", kPrivate, "<sys/types.h>", kPublic },
-  { "mode_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "mode_t", kPrivate, "<fcntl.h>", kPublic },
+  { "mode_t", kPrivate, "<ndbm.h>", kPublic },
+  { "mode_t", kPrivate, "<spawn.h>", kPublic },
   { "mode_t", kPrivate, "<sys/ipc.h>", kPublic },
   { "mode_t", kPrivate, "<sys/mman.h>", kPublic },
+  { "mode_t", kPrivate, "<sys/stat.h>", kPublic },
   { "nlink_t", kPrivate, "<sys/types.h>", kPublic },
   { "nlink_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "ntohl", kPrivate, "<arpa/inet.h>", kPublic },
+  { "ntohs", kPrivate, "<arpa/inet.h>", kPublic },
   { "off64_t", kPrivate, "<sys/types.h>", kPublic },
   { "off64_t", kPrivate, "<unistd.h>", kPublic },
   { "off_t", kPrivate, "<sys/types.h>", kPublic },
-  { "off_t", kPrivate, "<unistd.h>", kPublic },
-  { "off_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "off_t", kPrivate, "<aio.h>", kPublic },
+  { "off_t", kPrivate, "<fcntl.h>", kPublic },
+  { "off_t", kPrivate, "<stdio.h>", kPublic },
   { "off_t", kPrivate, "<sys/mman.h>", kPublic },
+  { "off_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "off_t", kPrivate, "<unistd.h>", kPublic },
+  { "optarg", kPrivate, "<unistd.h>", kPublic },
+  { "opterr", kPrivate, "<unistd.h>", kPublic },
+  { "optind", kPrivate, "<unistd.h>", kPublic },
+  { "optopt", kPrivate, "<unistd.h>", kPublic },
   { "pid_t", kPrivate, "<sys/types.h>", kPublic },
-  { "pid_t", kPrivate, "<unistd.h>", kPublic },
+  { "pid_t", kPrivate, "<fcntl.h>", kPublic },
+  { "pid_t", kPrivate, "<sched.h>", kPublic },
   { "pid_t", kPrivate, "<signal.h>", kPublic },
+  { "pid_t", kPrivate, "<spawn.h>", kPublic },
   { "pid_t", kPrivate, "<sys/msg.h>", kPublic },
+  { "pid_t", kPrivate, "<sys/sem.h>", kPublic },
   { "pid_t", kPrivate, "<sys/shm.h>", kPublic },
+  { "pid_t", kPrivate, "<sys/wait.h>", kPublic },
   { "pid_t", kPrivate, "<termios.h>", kPublic },
   { "pid_t", kPrivate, "<time.h>", kPublic },
+  { "pid_t", kPrivate, "<unistd.h>", kPublic },
   { "pid_t", kPrivate, "<utmpx.h>", kPublic },
   { "ptrdiff_t", kPrivate, "<stddef.h>", kPublic },
+  { "regex_t", kPrivate, "<regex.h>", kPublic },
+  { "regmatch_t", kPrivate, "<regex.h>", kPublic },
+  { "regoff_t", kPrivate, "<regex.h>", kPublic },
+  { "sigevent", kPrivate, "<signal.h>", kPublic },
+  { "sigevent", kPrivate, "<aio.h>", kPublic },
+  { "sigevent", kPrivate, "<mqueue.h>", kPublic },
+  { "sigevent", kPrivate, "<time.h>", kPublic },
+  { "siginfo_t", kPrivate, "<signal.h>", kPublic },
+  { "siginfo_t", kPrivate, "<sys/wait.h>", kPublic },
   { "sigset_t", kPrivate, "<signal.h>", kPublic },
-  { "sigset_t", kPrivate, "<sys/epoll.h>", kPublic },
+  { "sigset_t", kPrivate, "<spawn.h>", kPublic },
   { "sigset_t", kPrivate, "<sys/select.h>", kPublic },
-  { "socklen_t", kPrivate, "<bits/socket.h>", kPrivate },
-  { "socklen_t", kPrivate, "<unistd.h>", kPublic },
-  { "socklen_t", kPrivate, "<arpa/inet.h>", kPublic },
+  { "sigval", kPrivate, "<signal.h>", kPublic },
+  { "sockaddr", kPrivate, "<sys/socket.h>", kPublic },
+  { "socklen_t", kPrivate, "<sys/socket.h>", kPublic },
+  { "socklen_t", kPrivate, "<netdb.h>", kPublic },
   { "ssize_t", kPrivate, "<sys/types.h>", kPublic },
-  { "ssize_t", kPrivate, "<unistd.h>", kPublic },
+  { "ssize_t", kPrivate, "<aio.h>", kPublic },
   { "ssize_t", kPrivate, "<monetary.h>", kPublic },
+  { "ssize_t", kPrivate, "<mqueue.h>", kPublic },
+  { "ssize_t", kPrivate, "<stdio.h>", kPublic },
   { "ssize_t", kPrivate, "<sys/msg.h>", kPublic },
+  { "ssize_t", kPrivate, "<sys/socket.h>", kPublic },
+  { "ssize_t", kPrivate, "<sys/uio.h>", kPublic },
+  { "ssize_t", kPrivate, "<unistd.h>", kPublic },
+  { "stat", kPrivate, "<sys/stat.h>", kPublic },
+  { "stat", kPrivate, "<ftw.h>", kPublic },
   { "suseconds_t", kPrivate, "<sys/types.h>", kPublic },
-  { "suseconds_t", kPrivate, "<sys/time.h>", kPublic },
   { "suseconds_t", kPrivate, "<sys/select.h>", kPublic },
-  { "time_t", kPrivate, "<sys/types.h>", kPublic },
+  { "suseconds_t", kPrivate, "<sys/time.h>", kPublic },
   { "time_t", kPrivate, "<time.h>", kPublic },
+  { "time_t", kPrivate, "<sched.h>", kPublic },
+  { "time_t", kPrivate, "<sys/msg.h>", kPublic },
+  { "time_t", kPrivate, "<sys/select.h>", kPublic },
+  { "time_t", kPrivate, "<sys/sem.h>", kPublic },
+  { "time_t", kPrivate, "<sys/shm.h>", kPublic },
+  { "time_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "time_t", kPrivate, "<sys/time.h>", kPublic },
+  { "time_t", kPrivate, "<sys/types.h>", kPublic },
+  { "time_t", kPrivate, "<utime.h>", kPublic },
+  { "timer_t", kPrivate, "<sys/types.h>", kPublic },
+  { "timer_t", kPrivate, "<time.h>", kPublic },
   { "timespec", kPrivate, "<time.h>", kPublic },
+  { "timespec", kPrivate, "<aio.h>", kPublic },
+  { "timespec", kPrivate, "<mqueue.h>", kPublic },
+  { "timespec", kPrivate, "<sched.h>", kPublic },
+  { "timespec", kPrivate, "<signal.h>", kPublic },
+  { "timespec", kPrivate, "<sys/select.h>", kPublic },
+  { "timespec", kPrivate, "<sys/stat.h>", kPublic },
   { "timeval", kPrivate, "<sys/time.h>", kPublic },
+  { "timeval", kPrivate, "<sys/resource.h>", kPublic },
+  { "timeval", kPrivate, "<sys/select.h>", kPublic },
+  { "timeval", kPrivate, "<utmpx.h>", kPublic },
+  { "tm", kPrivate, "<time.h>", kPublic },
   { "u_char", kPrivate, "<sys/types.h>", kPublic },
   { "u_char", kPrivate, "<rpc/types.h>", kPublic },
   { "uid_t", kPrivate, "<sys/types.h>", kPublic },
-  { "uid_t", kPrivate, "<unistd.h>", kPublic },
   { "uid_t", kPrivate, "<pwd.h>", kPublic },
   { "uid_t", kPrivate, "<signal.h>", kPublic },
   { "uid_t", kPrivate, "<stropts.h>", kPublic },
   { "uid_t", kPrivate, "<sys/ipc.h>", kPublic },
   { "uid_t", kPrivate, "<sys/stat.h>", kPublic },
+  { "uid_t", kPrivate, "<unistd.h>", kPublic },
   { "useconds_t", kPrivate, "<sys/types.h>", kPublic },
   { "useconds_t", kPrivate, "<unistd.h>", kPublic },
   { "wchar_t", kPrivate, "<stddef.h>", kPublic },
   { "wchar_t", kPrivate, "<stdlib.h>", kPublic },
-  // glob.h seems to define size_t if necessary, but it should come from stddef.
   // It is unspecified if the cname headers provide ::size_t.
   // <locale.h> is the one header which defines NULL but not size_t.
   { "size_t", kPrivate, "<stddef.h>", kPublic },  // 'canonical' location for size_t
+  { "size_t", kPrivate, "<aio.h>", kPublic },
+  { "size_t", kPrivate, "<glob.h>", kPublic },
+  { "size_t", kPrivate, "<grp.h>", kPublic },
+  { "size_t", kPrivate, "<iconv.h>", kPublic },
+  { "size_t", kPrivate, "<monetary.h>", kPublic },
+  { "size_t", kPrivate, "<mqueue.h>", kPublic },
+  { "size_t", kPrivate, "<ndbm.h>", kPublic },
+  { "size_t", kPrivate, "<pwd.h>", kPublic },
+  { "size_t", kPrivate, "<regex.h>", kPublic },
+  { "size_t", kPrivate, "<search.h>", kPublic },
+  { "size_t", kPrivate, "<signal.h>", kPublic },
   { "size_t", kPrivate, "<stdio.h>", kPublic },
   { "size_t", kPrivate, "<stdlib.h>", kPublic },
   { "size_t", kPrivate, "<string.h>", kPublic },
+  { "size_t", kPrivate, "<strings.h>", kPublic },
+  { "size_t", kPrivate, "<sys/mman.h>", kPublic },
+  { "size_t", kPrivate, "<sys/msg.h>", kPublic },
+  { "size_t", kPrivate, "<sys/sem.h>", kPublic },
+  { "size_t", kPrivate, "<sys/shm.h>", kPublic },
+  { "size_t", kPrivate, "<sys/socket.h>", kPublic },
+  { "size_t", kPrivate, "<sys/types.h>", kPublic },
+  { "size_t", kPrivate, "<sys/uio.h>", kPublic },
   { "size_t", kPrivate, "<time.h>", kPublic },
   { "size_t", kPrivate, "<uchar.h>", kPublic },
+  { "size_t", kPrivate, "<unistd.h>", kPublic },
   { "size_t", kPrivate, "<wchar.h>", kPublic },
+  { "size_t", kPrivate, "<wordexp.h>", kPublic },
   // Macros that can be defined in more than one file, don't have the
   // same __foo_defined guard that other types do, so the grep above
   // doesn't discover them.  Until I figure out a better way, I just
@@ -204,7 +304,18 @@ const IncludeMapEntry libc_symbol_map[] = {
   { "EOF", kPrivate, "<stdio.h>", kPublic },
   { "EOF", kPrivate, "<libio.h>", kPublic },
   { "FILE", kPrivate, "<stdio.h>", kPublic },
+  { "MAP_POPULATE", kPrivate, "<sys/mman.h>", kPublic },
+  { "MAP_POPULATE", kPrivate, "<linux/mman.h>", kPublic },
+  { "MAP_STACK", kPrivate, "<sys/mman.h>", kPublic },
+  { "MAP_STACK", kPrivate, "<linux/mman.h>", kPublic },
+  { "MAXHOSTNAMELEN", kPrivate, "<sys/param.h>", kPublic },
+  { "MAXHOSTNAMELEN", kPrivate, "<protocols/timed.h>", kPublic },
+  { "SIGABRT", kPrivate, "<signal.h>", kPublic },
+  { "SIGCHLD", kPrivate, "<signal.h>", kPublic },
+  { "SIGCHLD", kPrivate, "<linux/signal.h>", kPublic },
   { "va_list", kPrivate, "<stdarg.h>", kPublic },
+  { "va_list", kPrivate, "<stdio.h>", kPublic },
+  { "va_list", kPrivate, "<wchar.h>", kPublic },
   // These are symbols that could be defined in either stdlib.h or
   // malloc.h, but we always want the stdlib location.
   { "malloc", kPrivate, "<stdlib.h>", kPublic },
@@ -225,12 +336,13 @@ const IncludeMapEntry libc_symbol_map[] = {
   { "NULL", kPrivate, "<stdlib.h>", kPublic },
   { "NULL", kPrivate, "<string.h>", kPublic },
   { "NULL", kPrivate, "<time.h>", kPublic },
+  { "NULL", kPrivate, "<unistd.h>", kPublic },
   { "NULL", kPrivate, "<wchar.h>", kPublic },
 };
 
-// Symbol -> include mappings for GNU libstdc++
-const IncludeMapEntry libstdcpp_symbol_map[] = {
-  // Kludge time: almost all STL types take an allocator, but they
+// Common kludges for C++ standard libraries
+const IncludeMapEntry stdlib_cxx_symbol_map[] = {
+  // Almost all STL types take an allocator, but they
   // almost always use the default value.  Usually we detect that
   // and don't try to do IWYU, but sometimes it passes through.
   // For instance, when adding two strings, we end up calling
@@ -253,10 +365,24 @@ const IncludeMapEntry libstdcpp_symbol_map[] = {
   { "std::char_traits", kPrivate, "<string>", kPublic },
   { "std::char_traits", kPrivate, "<ostream>", kPublic },
   { "std::char_traits", kPrivate, "<istream>", kPublic },
+
+  { "std::size_t", kPrivate, "<cstddef>", kPublic },  // 'canonical' location for std::size_t
+  { "std::size_t", kPrivate, "<cstdio>", kPublic },
+  { "std::size_t", kPrivate, "<cstdlib>", kPublic },
+  { "std::size_t", kPrivate, "<cstring>", kPublic },
+  { "std::size_t", kPrivate, "<ctime>", kPublic },
+  { "std::size_t", kPrivate, "<cuchar>", kPublic },
+  { "std::size_t", kPrivate, "<cwchar>", kPublic },
 };
 
-// Private -> public include mappings for GNU libc
+// Symbol -> include mappings for GNU libstdc++
+const IncludeMapEntry libstdcpp_symbol_map[] = {
+  // GCC defines std::declval in <type_traits>, but the canonical location is <utility>
+  { "std::declval", kPrivate, "<utility>", kPublic },
+};
+
 const IncludeMapEntry libc_include_map[] = {
+  // Private -> public include mappings for GNU libc
   // ( cd /usr/include && grep '^ *# *include' {sys/,net/,}* | perl -nle 'm/^([^:]+).*<([^>]+)>/ && print qq@    { "<$2>", kPrivate, "<$1>", kPublic },@' | grep bits/ | sort )
   // When I saw more than one mapping for these, I typically picked
   // what I thought was the "best" one.
@@ -296,6 +422,7 @@ const IncludeMapEntry libc_include_map[] = {
   { "<bits/mathdef.h>", kPrivate, "<math.h>", kPublic },
   { "<bits/mathinline.h>", kPrivate, "<math.h>", kPublic },
   { "<bits/mman.h>", kPrivate, "<sys/mman.h>", kPublic },
+  { "<bits/mman-shared.h>", kPrivate, "<sys/mman.h>", kPublic },
   { "<bits/monetary-ldbl.h>", kPrivate, "<monetary.h>", kPublic },
   { "<bits/mqueue.h>", kPrivate, "<mqueue.h>", kPublic },
   { "<bits/mqueue2.h>", kPrivate, "<mqueue.h>", kPublic },
@@ -347,18 +474,25 @@ const IncludeMapEntry libc_include_map[] = {
   { "<bits/string2.h>", kPrivate, "<string.h>", kPublic },
   { "<bits/string3.h>", kPrivate, "<string.h>", kPublic },
   { "<bits/stropts.h>", kPrivate, "<stropts.h>", kPublic },
+  { "<bits/struct_stat.h>", kPrivate, "<sys/stat.h>", kPublic },
+  { "<bits/struct_stat.h>", kPrivate, "<ftw.h>", kPublic },
   { "<bits/sys_errlist.h>", kPrivate, "<stdio.h>", kPublic },
-  { "<bits/syscall.h>", kPrivate, "<sys/syscall.h>", kPrivate },
+  { "<bits/syscall.h>", kPrivate, "<sys/syscall.h>", kPublic },
   { "<bits/sysctl.h>", kPrivate, "<sys/sysctl.h>", kPublic },
   { "<bits/syslog-ldbl.h>", kPrivate, "<sys/syslog.h>", kPrivate },
   { "<bits/syslog-path.h>", kPrivate, "<sys/syslog.h>", kPrivate },
   { "<bits/syslog.h>", kPrivate, "<sys/syslog.h>", kPrivate },
+  { "<bits/termios-c_lflag.h>", kPrivate, "<termios.h>", kPublic },
+  { "<bits/termios-struct.h>", kPrivate, "<termios.h>", kPublic },
+  { "<bits/termios-tcflow.h>", kPrivate, "<termios.h>", kPublic },
   { "<bits/termios.h>", kPrivate, "<termios.h>", kPublic },
   { "<bits/time.h>", kPrivate, "<time.h>", kPublic },
   { "<bits/time.h>", kPrivate, "<sys/time.h>", kPublic },
   { "<bits/timerfd.h>", kPrivate, "<sys/timerfd.h>", kPublic },
   { "<bits/timex.h>", kPrivate, "<sys/timex.h>", kPublic },
   { "<bits/types.h>", kPrivate, "<sys/types.h>", kPublic },
+  { "<bits/types/siginfo_t.h>", kPrivate, "<signal.h>", kPublic },
+  { "<bits/types/siginfo_t.h>", kPrivate, "<sys/wait.h>", kPublic },
   { "<bits/uio.h>", kPrivate, "<sys/uio.h>", kPublic },
   { "<bits/unistd.h>", kPrivate, "<unistd.h>", kPublic },
   { "<bits/ustat.h>", kPrivate, "<sys/ustat.h>", kPrivate },
@@ -423,7 +557,6 @@ const IncludeMapEntry libc_include_map[] = {
   { "<bits/string.h>", kPrivate, "<string.h>", kPublic },
   { "<bits/string2.h>", kPrivate, "<string.h>", kPublic },
   { "<bits/string3.h>", kPrivate, "<string.h>", kPublic },
-  { "<bits/syscall.h>", kPrivate, "<sys/syscall.h>", kPrivate },
   { "<bits/timerfd.h>", kPrivate, "<sys/timerfd.h>", kPublic },
   { "<bits/typesizes.h>", kPrivate, "<sys/types.h>", kPublic },
   // Top-level #includes that just forward to another file:
@@ -434,7 +567,6 @@ const IncludeMapEntry libc_include_map[] = {
   // to decide which of the two files is canonical.  If neither is
   // on the POSIX.1 1998 list, I just choose the top-level one.
   { "<sys/poll.h>", kPrivate, "<poll.h>", kPublic },
-  { "<sys/syscall.h>", kPrivate, "<syscall.h>", kPublic },
   { "<sys/syslog.h>", kPrivate, "<syslog.h>", kPublic },
   { "<sys/ustat.h>", kPrivate, "<ustat.h>", kPublic },
   { "<wait.h>", kPrivate, "<sys/wait.h>", kPublic },
@@ -456,10 +588,12 @@ const IncludeMapEntry libc_include_map[] = {
   { "<asm/errno.h>", kPrivate, "<errno.h>", kPublic },
   { "<asm/errno-base.h>", kPrivate, "<errno.h>", kPublic },
   { "<asm/ptrace-abi.h>", kPrivate, "<asm/ptrace.h>", kPublic },
-  { "<asm/unistd.h>", kPrivate, "<syscall.h>", kPublic },
+  { "<asm/unistd.h>", kPrivate, "<sys/syscall.h>", kPublic },
   { "<linux/limits.h>", kPrivate, "<limits.h>", kPublic },   // PATH_MAX
   { "<linux/prctl.h>", kPrivate, "<sys/prctl.h>", kPublic },
   { "<sys/ucontext.h>", kPrivate, "<ucontext.h>", kPublic },
+  // Exports guaranteed by the C standard
+  { "<stdint.h>", kPublic, "<inttypes.h>", kPublic },
 };
 
 const IncludeMapEntry stdlib_c_include_map[] = {
@@ -720,6 +854,7 @@ const IncludeMapEntry libstdcpp_include_map[] = {
   { "<bits/unique_ptr.h>", kPrivate, "<memory>", kPublic },
   { "<bits/unordered_map.h>", kPrivate, "<unordered_map>", kPublic },
   { "<bits/unordered_set.h>", kPrivate, "<unordered_set>", kPublic },
+  { "<bits/utility.h>", kPrivate, "<utility>", kPublic },
   { "<bits/valarray_after.h>", kPrivate, "<valarray>", kPublic },
   { "<bits/valarray_array.h>", kPrivate, "<valarray>", kPublic },
   { "<bits/valarray_array.tcc>", kPrivate, "<valarray>", kPublic },
@@ -964,20 +1099,20 @@ void MakeNodeTransitive(IncludePicker::IncludeMap* filename_map,
                         const string& key) {
   // If we've already calculated this node's transitive closure, we're done.
   const TransitiveStatus status = (*seen_nodes)[key];
-  if (status == kCalculating) {   // means there's a cycle in the mapping
-    // TODO: Reconsider cycle handling; the include_cycle test fails without
-    // this special-casing, but it seems we should handle this more generally.
-    if (key.find("internal/") != string::npos) {
-      VERRS(4) << "Ignoring a cyclical mapping involving " << key << "\n";
-      return;
-    }
-  }
-  if (status == kCalculating) {
-    VERRS(0) << "Cycle in include-mapping:\n";
+  if (status == kCalculating) {  // means there's a cycle in the mapping
+    // Note that cycles in mappings are generally benign, the cycle detection
+    // here is only necessary to protect the recursive algorithm from infinite
+    // regress. We will still expand all reachable nodes in the graph to a
+    // plain sequence representing the transitive closure.
+    // The expanded mappings are only used for simple lookup, never followed
+    // recursively (which could have necessitated preserving cycles and handling
+    // them in that traversal too).
+    // Log cycles at a high verbosity level to aid debugging.
+    VERRS(8) << "Ignored cycle in include mappings: ";
     for (const string& node : *node_stack)
-      VERRS(0) << "  " << node << " ->\n";
-    VERRS(0) << "  " << key << "\n";
-    CHECK_UNREACHABLE_("Cycle in include-mapping");  // cycle is a fatal error
+      VERRS(8) << node << " -> ";
+    VERRS(8) << key << "\n";
+    return;
   }
   if (status == kDone)
     return;
@@ -1103,26 +1238,43 @@ bool MappedInclude::HasAbsoluteQuotedInclude() const {
   return IsAbsolutePath(path);
 }
 
-IncludePicker::IncludePicker(bool no_default_mappings)
-    : has_called_finalize_added_include_lines_(false) {
-  if (!no_default_mappings) {
-    AddDefaultMappings();
-  }
+IncludePicker::IncludePicker(RegexDialect regex_dialect,
+                             CStdLib cstdlib,
+                             CXXStdLib cxxstdlib)
+    : has_called_finalize_added_include_lines_(false),
+      regex_dialect(regex_dialect) {
+  AddDefaultMappings(cstdlib, cxxstdlib);
 }
 
-void IncludePicker::AddDefaultMappings() {
-  AddSymbolMappings(libc_symbol_map, IWYU_ARRAYSIZE(libc_symbol_map));
-  AddSymbolMappings(libstdcpp_symbol_map, IWYU_ARRAYSIZE(libstdcpp_symbol_map));
+void IncludePicker::AddDefaultMappings(CStdLib cstdlib,
+                                       CXXStdLib cxxstdlib) {
+  if (cstdlib == CStdLib::Glibc) {
+    AddSymbolMappings(libc_symbol_map, IWYU_ARRAYSIZE(libc_symbol_map));
+    AddIncludeMappings(libc_include_map, IWYU_ARRAYSIZE(libc_include_map));
+  }
 
-  AddIncludeMappings(libc_include_map,
-      IWYU_ARRAYSIZE(libc_include_map));
-  AddIncludeMappings(stdlib_c_include_map,
-      IWYU_ARRAYSIZE(stdlib_c_include_map));
-  AddIncludeMappings(libstdcpp_include_map,
-      IWYU_ARRAYSIZE(libstdcpp_include_map));
+  if (cxxstdlib == CXXStdLib::Libstdcxx) {
+    AddSymbolMappings(libstdcpp_symbol_map,
+                      IWYU_ARRAYSIZE(libstdcpp_symbol_map));
+    AddIncludeMappings(libstdcpp_include_map,
+                       IWYU_ARRAYSIZE(libstdcpp_include_map));
+  }
 
-  AddPublicIncludes(stdlib_cpp_public_headers,
-      IWYU_ARRAYSIZE(stdlib_cpp_public_headers));
+  if (cxxstdlib != CXXStdLib::None) {
+    // Map C headers to associated C++ headers. The standard library
+    // mappings shouldn't be mentioning the C headers.
+    AddIncludeMappings(stdlib_c_include_map,
+                       IWYU_ARRAYSIZE(stdlib_c_include_map));
+
+    // Add common C++ mappings to deal with generic C++ standard
+    // library symbol issues (so the standard library doesn't have to
+    // do this too). If it does that's ok.
+    AddSymbolMappings(stdlib_cxx_symbol_map,
+                      IWYU_ARRAYSIZE(stdlib_cxx_symbol_map));
+
+    AddPublicIncludes(stdlib_cpp_public_headers,
+                      IWYU_ARRAYSIZE(stdlib_cpp_public_headers));
+  }
 }
 
 void IncludePicker::MarkVisibility(VisibilityMap* map,
@@ -1179,6 +1331,7 @@ void IncludePicker::AddDirectInclude(
     // the closing quote as part of the .*.
     AddFriendRegex(includee_filepath,
                    quoted_includee.substr(0, internal_pos) + ".*");
+    VERRS(8) << "Adding dynamic mapping for internal/ header\n";
     AddMapping(quoted_includee, mapped_includer);
   }
 
@@ -1188,6 +1341,7 @@ void IncludePicker::AddDirectInclude(
     string public_header = quoted_includee;
     StripPast(&public_header, "/");   // read past "asm-whatever/"
     public_header = "<asm/" + public_header;   // now it's <asm/something.h>
+    VERRS(8) << "Adding dynamic mapping for <asm-*> header\n";
     AddMapping(quoted_includee, MappedInclude(public_header));
   }
 }
@@ -1309,18 +1463,20 @@ void IncludePicker::ExpandRegexes() {
   for (const auto& incmap : quoted_includes_to_quoted_includers_) {
     const string& hdr = incmap.first;
     for (const string& regex_key : filepath_include_map_regex_keys) {
+      const string regex = regex_key.substr(1);
       const vector<MappedInclude>& map_to = filepath_include_map_[regex_key];
-      // Enclose the regex in ^(...)$ for full match.
-      llvm::Regex regex(std::string("^(" + regex_key.substr(1) + ")$"));
-      if (regex.match(hdr, nullptr) && !ContainsQuotedInclude(map_to, hdr)) {
-        Extend(&filepath_include_map_[hdr], filepath_include_map_[regex_key]);
+      if (RegexMatch(regex_dialect, hdr, regex) &&
+          !ContainsQuotedInclude(map_to, hdr)) {
+        for (const MappedInclude& target : map_to) {
+          filepath_include_map_[hdr].push_back(MappedInclude(
+              RegexReplace(regex_dialect, hdr, regex, target.quoted_include)));
+        }
         MarkVisibility(&include_visibility_map_, hdr,
                        include_visibility_map_[regex_key]);
       }
     }
     for (const string& regex_key : friend_to_headers_map_regex_keys) {
-      llvm::Regex regex(std::string("^(" + regex_key.substr(1) + ")$"));
-      if (regex.match(hdr, nullptr)) {
+      if (RegexMatch(regex_dialect, hdr, regex_key.substr(1))) {
         InsertAllInto(friend_to_headers_map_[regex_key],
                       &friend_to_headers_map_[hdr]);
       }

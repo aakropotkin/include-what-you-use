@@ -1,6 +1,6 @@
-# Instructions for Developers #
+# Instructions for developers #
 
-## Submitting Patches ##
+## Submitting patches ##
 
 We welcome patches and rely on your contributions to make IWYU smarter.
 
@@ -10,31 +10,31 @@ Use GitHub's [pull request system](https://github.com/include-what-you-use/inclu
 
 It's usually a good idea to run ideas by the [IWYU mailing list](http://groups.google.com/group/include-what-you-use) to get general agreement on directions before you start hacking.
 
-## Running the Tests ##
+## Running the tests ##
 
 If fixing a bug in IWYU, please add a test to the test suite!  You can create a file called `whatever.cc` (_not_ .cpp), and, if necessary, `whatever.h`, and `whatever-<extension>.h`.  You may be able to get away without adding any `.h` files, and just including `direct.h` -- see, for instance, `tests/remove_fwd_decl_when_including.cc`.
 
 To run the IWYU tests, run
 
-    python run_iwyu_tests.py
+    python3 run_iwyu_tests.py
 
 It runs one test for each `.cc` file in the `tests/` directory.  (We have additional tests in `more_tests/`, but have not yet gotten the testing framework set up for those tests.) The test runner searches for IWYU in the system `PATH` by default.
 
 The output can be a bit hard to read, but if a test fails, the reason why will be listed after the `ERROR:root:Test failed for xxx` line.
 
-You can select individual tests by listing their filename without extension as arguments
+You can select individual tests by listing them as arguments. Test names are derived from the file path and name, e.g. `tests/cxx/array.cc` will be named `cxx.test_array`. You can use `python3 run_iwyu_tests.py --list` to list all available test names.
 
-    python run_iwyu_tests.py array macro_location
+    python3 run_iwyu_tests.py cxx.test_array cxx.test_macro_location c.test_enum
 
 If you don't want to modify your `PATH` you can specify which IWYU executable to use for testing
 
-    python run_iwyu_tests.py -- ./include-what-you-use
+    python3 run_iwyu_tests.py -- ./include-what-you-use
 
 (put any test names before '--' and the IWYU path after.)
 
 When fixing `fix_includes.py`, add a test case to `fix_includes_test.py` and run
 
-    python fix_includes_test.py
+    python3 fix_includes_test.py
 
 ## Debugging ##
 
@@ -42,7 +42,7 @@ It's possible to run include-what-you-use in `gdb`, to debug that way. Another u
 
     env IWYU_VERBOSE=7 make -k CXX=/path/to/llvm/Debug+Asserts/bin/include-what-you-use 2>&1 > /tmp/iwyu.verbose
 
-## A Quick Tour of the Codebase ##
+## A quick tour of the codebase ##
 
 The codebase is strewn with TODOs of known problems, and also language constructs that aren't adequately tested yet.  So there's plenty to do!  Here's a brief guide through the codebase:
 
