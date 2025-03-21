@@ -1107,15 +1107,14 @@ void ProcessForwardDeclare(OneUse* use,
   if (tpl_decl)
     tag_decl = tpl_decl->getTemplatedDecl();
 
-  const NamedDecl* class_decl = tag_decl;
   const ObjCContainerDecl* objc_decl = DynCastFrom(use->decl());
   if (objc_decl)
-    class_decl = objc_decl;
+    tag_decl = DynCastFrom(objc_decl);
 
   // (A2) If it has default template parameters, recategorize as a full use.
   // Suppress this if there's no definition for this class (so can't full-use).
   if (tpl_decl && HasDefaultTemplateParameters(tpl_decl) &&
-      GetTagDefinition(tpl_decl) != nullptr) {
+      GetDefinitionForClass(tpl_decl) != nullptr) {
     VERRS(6) << "Moving " << use->symbol_name()
              << " from fwd-decl use to full use: has default template param"
              << " (" << use->PrintableUseLoc() << ")\n";
@@ -1182,6 +1181,7 @@ void ProcessForwardDeclare(OneUse* use,
   // Note: for the 'earlier' checks, what matters is the *instantiation*
   // location.
   const set<const NamedDecl*> redecls = GetTagRedecls(tag_decl);
+  for (const NamedDecl* redecl : redecls) {
     CHECK_((isa<TagDecl>(redecl) || isa<ObjCInterfaceDecl>(redecl) ||
             isa<ObjCProtocolDecl>(redecl)) &&
            "GetTagRedecls has redecls of wrong type");
@@ -1510,7 +1510,7 @@ void CalculateIwyuForForwardDeclareUse(
   bool dfn_is_in_desired_includes = false;
   bool dfn_is_in_actual_includes = false;
 
-  const NamedDecl* dfn = GetTagDefinition(use->decl());
+  const NamedDecl* dfn = GetDefinitionForClass(use->decl());
   if (dfn) {
     vector<string> headers =
         GlobalIncludePicker().GetCandidateHeadersForFilepathIncludedFrom(
@@ -1531,7 +1531,7 @@ void CalculateIwyuForForwardDeclareUse(
 
   // We also want to know if *any* redecl of this type is defined
   // in the same file as the use (and before it).
-  const set<const NamedDecl*>& redecls = GetClassRedecls(class_decl);
+  const set<const NamedDecl*>& redecls = GetTagRedecls(class_decl);
   for (const NamedDecl* redecl : redecls) {
     if (DeclIsVisibleToUseInSameFile(redecl, *use)) {
       same_file_decl = redecl;

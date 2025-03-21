@@ -1398,7 +1398,7 @@ class IwyuBaseAstVisitor : public BaseAstVisitor<Derived> {
     // semantics we want.  Note if there's no definition anywhere, we
     // say the author does not want the full type (which is a good
     // thing, since there isn't one!)
-    if (const NamedDecl* dfn = GetTagDefinition(decl)) {
+    if (const NamedDecl* dfn = GetDefinitionForClass(decl)) {
       if (IsBeforeInSameFile(dfn, use_loc))
         return false;
       if (preprocessor_info().PublicHeaderIntendsToProvide(

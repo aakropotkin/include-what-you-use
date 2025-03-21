@@ -718,7 +718,7 @@ void IwyuPreprocessorInfo::InclusionDirective(
   if (imported)
     GlobalIncludeMap().module(hash_loc, imported);
   else
-    GlobalIncludeMap().include(hash_loc, file);
+    GlobalIncludeMap().include(hash_loc, & file->getFileEntry());
 
   // among additional inclusion directives we handle only Objective-C #import
   if (include_token.is(clang::tok::identifier) &&

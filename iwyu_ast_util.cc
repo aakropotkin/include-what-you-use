@@ -648,7 +648,6 @@ bool HasCovariantReturnType(const CXXMethodDecl* method_decl) {
 }
 
 const NamedDecl* GetDefinitionForClass(const Decl* decl) {
-const TagDecl* GetTagDefinition(const Decl* decl) {
   const TagDecl* as_tag = DynCastFrom(decl);
   const ClassTemplateDecl* as_tpl = DynCastFrom(decl);
   if (as_tpl) {  // Convert the template to its underlying class defn.
@@ -961,7 +960,7 @@ const NamedDecl* GetDefinitionAsWritten(const NamedDecl* decl) {
       decl = tp_decl;
   }
   // Then, get to definition.
-  if (const NamedDecl* class_dfn = GetTagDefinition(decl)) {
+  if (const NamedDecl* class_dfn = GetDefinitionForClass(decl)) {
     return class_dfn;
   } else if (const FunctionDecl* fn_decl = DynCastFrom(decl)) {
     for (FunctionDecl::redecl_iterator it = fn_decl->redecls_begin();
